@@ -36,7 +36,7 @@ public class EventSummaryDto implements Serializable {
     @NoArgsConstructor(access = AccessLevel.PROTECTED)
     @AllArgsConstructor
     @Builder
-    public static class Reward {
+    public static class Reward implements Serializable {
         private Integer rank;
         private String reward;
         @Builder.Default
