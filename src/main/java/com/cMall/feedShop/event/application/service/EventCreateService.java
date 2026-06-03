@@ -9,6 +9,7 @@ import com.cMall.feedShop.event.domain.enums.EventStatus;
 import com.cMall.feedShop.event.domain.repository.EventRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -40,6 +41,8 @@ public class EventCreateService {
      * @param requestDto 이벤트 생성 요청 DTO
      * @return 생성된 이벤트 응답 DTO
      */
+    // [Phase 2-A] 이벤트 생성 시 목록 캐시 무효화
+    @CacheEvict(value = "availableEvents", allEntries = true)
     public EventCreateResponseDto createEvent(EventCreateRequestDto requestDto) {
         return createEventWithImages(requestDto, null);
     }
@@ -51,6 +54,7 @@ public class EventCreateService {
      * @param images 업로드할 이미지 파일 리스트
      * @return 생성된 이벤트 응답 DTO
      */
+    @CacheEvict(value = "availableEvents", allEntries = true)
     public EventCreateResponseDto createEventWithImages(EventCreateRequestDto requestDto, List<MultipartFile> images) {
         log.info("이벤트 생성 시작 - 제목: {}", requestDto.getTitle());
         

@@ -5,6 +5,7 @@ import com.cMall.feedShop.event.domain.repository.EventRepository;
 import com.cMall.feedShop.event.application.exception.EventNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,7 +19,9 @@ public class EventDeleteService {
     /**
      * 이벤트 소프트 딜리트(삭제)
      */
+    // [Phase 2-A] 이벤트 삭제 시 목록 캐시 무효화
     @Transactional
+    @CacheEvict(value = "availableEvents", allEntries = true)
     public void deleteEvent(Long eventId) {
         Event event = eventRepository.findById(eventId)
                 .orElseThrow(() -> new EventNotFoundException(eventId));
