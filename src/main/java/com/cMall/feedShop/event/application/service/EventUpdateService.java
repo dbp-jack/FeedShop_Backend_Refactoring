@@ -11,6 +11,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -29,7 +30,9 @@ public class EventUpdateService {
     /**
      * 이벤트 수정 비즈니스 로직
      */
+    // [Phase 2-A] 이벤트 수정 시 목록 캐시 무효화
     @Transactional
+    @CacheEvict(value = "availableEvents", allEntries = true)
     public void updateEvent(EventUpdateRequestDto dto) {
         updateEventWithImages(dto, null);
     }
@@ -38,6 +41,7 @@ public class EventUpdateService {
      * 이미지와 함께 이벤트 수정
      */
     @Transactional
+    @CacheEvict(value = "availableEvents", allEntries = true)
     public void updateEventWithImages(EventUpdateRequestDto dto, List<MultipartFile> images) {
         Event event = eventRepository.findDetailById(dto.getEventId())
                 .orElseThrow(() -> new EventNotFoundException(dto.getEventId()));

@@ -6,6 +6,7 @@ import com.cMall.feedShop.event.domain.repository.EventRepository;
 import com.cMall.feedShop.common.util.TimeUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,6 +33,8 @@ public class EventStatusService {
      * 모든 이벤트의 상태를 자동으로 업데이트
      * 스케줄러에서 호출됨
      */
+    // [Phase 2-A] 상태 일괄 업데이트 시 캐시 무효화
+    @CacheEvict(value = "availableEvents", allEntries = true)
     public void updateAllEventStatuses() {
         log.info("이벤트 상태 자동 업데이트 시작");
         

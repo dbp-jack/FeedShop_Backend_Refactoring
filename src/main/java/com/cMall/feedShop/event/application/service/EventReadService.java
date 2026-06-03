@@ -35,6 +35,10 @@ public class EventReadService {
     /**
      * 전체 이벤트 목록 조회 (페이징)
      */
+    // [BEFORE] 캐시 없음 → 매 요청마다 DB 조회
+    // [Phase 2-A] @Cacheable 적용 — page·size·sort 조합을 키로 캐싱
+    // Cache Miss → DB 조회(fetchJoin) → Redis 저장 → 이후 요청은 Redis에서 응답
+    @Cacheable(value = "availableEvents", key = "'all-' + #page + '-' + #size + '-' + #sort", unless = "#result == null")
     public EventListResponseDto getAllEvents(Integer page, Integer size, String sort) {
         // 정렬 처리
         Pageable pageable;
