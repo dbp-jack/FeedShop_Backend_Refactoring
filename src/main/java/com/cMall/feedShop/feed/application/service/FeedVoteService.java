@@ -13,6 +13,8 @@ import com.cMall.feedShop.user.domain.repository.UserRepository;
 import com.cMall.feedShop.user.application.service.UserLevelService;
 import com.cMall.feedShop.user.domain.model.ActivityType;
 import com.cMall.feedShop.user.application.service.PointService;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import com.cMall.feedShop.event.domain.Event;
 import com.cMall.feedShop.event.domain.enums.EventStatus;
 import com.cMall.feedShop.event.application.service.EventStatusService;
@@ -177,8 +179,17 @@ public class FeedVoteService {
         // 5. 피드 투표 수 감소
         feed.decrementVoteCount();
 
-        // [Phase 2-B] Redis DECR — voteFeed의 INCR와 대칭 유지
-        redisTemplate.opsForValue().decrement(VOTE_COUNT_KEY + feedId);
+        // [Phase 2-B] Redis DECR — DB 커밋 이후 실행 (트랜잭션 내 실행 시 롤백돼도 Redis는 복구 불가)
+        // 키 없거나 음수 결과 시 키 삭제 → getVoteCount()가 DB 폴백으로 재조회
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                Long result = redisTemplate.opsForValue().decrement(VOTE_COUNT_KEY + feedId);
+                if (result != null && result < 0) {
+                    redisTemplate.delete(VOTE_COUNT_KEY + feedId);
+                }
+            }
+        });
 
         log.info("피드 투표 취소 완료 - feedId: {}, userId: {}", feedId, userId);
     }
