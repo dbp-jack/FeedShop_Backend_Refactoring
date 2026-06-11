@@ -291,7 +291,7 @@ public class FeedVoteService {
                 }
             }
 
-            if (!feedPage.hasNextPage()) break;
+            if (feedPage.isLast()) break;
             pageNumber++;
         }
 
