@@ -267,26 +267,34 @@ public class FeedVoteService {
     }
 
     /**
-     * 모든 피드의 투표 수 동기화
+     * 모든 피드의 투표 수 동기화 — 전체 페이지 순회
+     * 페이지 크기보다 피드 수가 많을 경우 일부 피드가 누락되는 문제 방지
      */
     @Transactional
     public void syncAllVoteCounts() {
-        // Pageable을 사용하여 활성 피드만 조회 (삭제된 피드는 제외)
-        Pageable pageable = PageRequest.of(0, 1000); // 한 번에 1000개씩 처리
-        Page<Feed> feedPage = feedRepository.findAllActive(pageable);
-        List<Feed> feeds = feedPage.getContent();
-        
+        int pageSize = 1000;
+        int pageNumber = 0;
         int syncedCount = 0;
-        
-        for (Feed feed : feeds) {
-            try {
-                syncVoteCount(feed.getId());
-                syncedCount++;
-            } catch (Exception e) {
-                log.error("피드 투표 수 동기화 실패 - feedId: {}", feed.getId(), e);
+
+        while (true) {
+            Page<Feed> feedPage = feedRepository.findAllActive(PageRequest.of(pageNumber, pageSize));
+            List<Feed> feeds = feedPage.getContent();
+
+            if (feeds.isEmpty()) break;
+
+            for (Feed feed : feeds) {
+                try {
+                    syncVoteCount(feed.getId());
+                    syncedCount++;
+                } catch (Exception e) {
+                    log.error("피드 투표 수 동기화 실패 - feedId: {}", feed.getId(), e);
+                }
             }
+
+            if (!feedPage.hasNextPage()) break;
+            pageNumber++;
         }
-        
+
         log.info("전체 피드 투표 수 동기화 완료 - {}개 피드 처리됨", syncedCount);
     }
 
