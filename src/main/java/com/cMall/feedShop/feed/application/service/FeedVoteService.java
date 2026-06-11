@@ -230,30 +230,39 @@ public class FeedVoteService {
     }
 
     /**
-     * 투표 수 동기화 (Feed 엔티티의 participantVoteCount와 실제 투표 수 동기화)
+     * 투표 수 동기화 — feed_votes 실제 레코드 수 기준으로 feeds.participantVoteCount와 Redis 모두 보정
+     * feed_votes: 투표 원본 데이터 / feeds.participantVoteCount·Redis: 파생 값
+     * 파생 값끼리 보정하면 기존 오류가 복제되므로 항상 원본(feed_votes COUNT)을 기준으로 삼음
      */
     @Transactional
     public void syncVoteCount(Long feedId) {
         Feed feed = feedRepository.findById(feedId)
                 .orElseThrow(() -> new FeedNotFoundException(feedId));
-        
+
+        // feed_votes 실제 레코드 수 — 보정 기준
         long actualVoteCount = feedVoteRepository.countByFeed_Id(feedId);
         long currentCount = feed.getParticipantVoteCount();
-        
+
+        // feeds.participantVoteCount 보정
         if (actualVoteCount != currentCount) {
-            log.info("투표 수 동기화 - feedId: {}, 현재: {}, 실제: {}", feedId, currentCount, actualVoteCount);
-            
-            // 차이값만큼 조정
+            log.info("투표 수 동기화 - feedId: {}, feeds.count: {}, feed_votes.count: {}",
+                    feedId, currentCount, actualVoteCount);
             long difference = actualVoteCount - currentCount;
             if (difference > 0) {
-                for (int i = 0; i < difference; i++) {
-                    feed.incrementVoteCount();
-                }
+                for (int i = 0; i < difference; i++) feed.incrementVoteCount();
             } else {
-                for (int i = 0; i < Math.abs(difference); i++) {
-                    feed.decrementVoteCount();
-                }
+                for (int i = 0; i < Math.abs(difference); i++) feed.decrementVoteCount();
             }
+        }
+
+        // Redis 카운터 보정 — feed_votes 집계값으로 덮어씀
+        String redisKey = VOTE_COUNT_KEY + feedId;
+        String redisValue = redisTemplate.opsForValue().get(redisKey);
+        long redisCount = redisValue != null ? Long.parseLong(redisValue) : -1;
+        if (redisCount != actualVoteCount) {
+            log.info("Redis 투표 수 보정 - feedId: {}, Redis: {}, feed_votes.count: {}",
+                    feedId, redisCount, actualVoteCount);
+            redisTemplate.opsForValue().set(redisKey, String.valueOf(actualVoteCount));
         }
     }
 
