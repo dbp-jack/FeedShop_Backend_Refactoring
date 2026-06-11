@@ -177,6 +177,9 @@ public class FeedVoteService {
         // 5. 피드 투표 수 감소
         feed.decrementVoteCount();
 
+        // [Phase 2-B] Redis DECR — voteFeed의 INCR와 대칭 유지
+        redisTemplate.opsForValue().decrement(VOTE_COUNT_KEY + feedId);
+
         log.info("피드 투표 취소 완료 - feedId: {}, userId: {}", feedId, userId);
     }
 
