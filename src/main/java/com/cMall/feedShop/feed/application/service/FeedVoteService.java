@@ -206,7 +206,8 @@ public class FeedVoteService {
 
     /**
      * 특정 피드의 투표 개수 조회
-     * [Phase 2-B] Redis 우선 조회 → Redis 없으면 DB 조회 (SET 없음 — 경쟁 조건 방지)
+     * [Phase 2-B] Redis 우선 조회 → Redis 없으면 DB 집계 후 setIfAbsent로 재설정
+     * setIfAbsent: 동시 요청 시 첫 번째 스레드만 SET 성공 → 경쟁 조건 방지
      */
     public long getVoteCount(Long feedId) {
         String redisKey = VOTE_COUNT_KEY + feedId;
@@ -214,8 +215,11 @@ public class FeedVoteService {
         if (cached != null) {
             return Long.parseLong(cached);
         }
-        // Redis에 값 없으면 DB에서 직접 조회 (SET 하지 않음 → 동시 요청 시 잘못된 초기값 방지)
-        return feedVoteRepository.countByFeed_Id(feedId);
+        // Redis 키 없음 (장애 후 키 삭제, 음수 방지 삭제 등) → DB 원본 집계 후 Redis 복구
+        // setIfAbsent: 동시 여러 스레드가 동시에 DB 조회 후 SET 시도해도 첫 번째만 성공
+        long dbCount = feedVoteRepository.countByFeed_Id(feedId);
+        redisTemplate.opsForValue().setIfAbsent(redisKey, String.valueOf(dbCount));
+        return dbCount;
     }
 
     /**
