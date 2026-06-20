@@ -8,6 +8,7 @@ import org.aspectj.lang.annotation.Pointcut;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
+import org.springframework.context.annotation.Profile;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import java.util.Arrays;
@@ -22,6 +23,7 @@ import java.util.UUID;
  */
 @Aspect
 @Component
+@Profile("!perf")
 public class LoggingAspect {
 
     private static final Logger log = LoggerFactory.getLogger(LoggingAspect.class);

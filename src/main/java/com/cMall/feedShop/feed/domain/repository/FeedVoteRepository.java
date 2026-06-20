@@ -18,11 +18,6 @@ public interface FeedVoteRepository extends JpaRepository<FeedVote, Long> {
     boolean existsByFeed_IdAndVoter_Id(Long feedId, Long voterId);
 
     /**
-     * 특정 피드에 특정 사용자의 투표 조회
-     */
-    Optional<FeedVote> findByFeed_IdAndVoter_Id(Long feedId, Long voterId);
-
-    /**
      * 특정 피드의 투표 목록 조회
      */
     List<FeedVote> findByFeed_Id(Long feedId);

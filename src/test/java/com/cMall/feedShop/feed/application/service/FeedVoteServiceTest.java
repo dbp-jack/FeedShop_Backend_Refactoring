@@ -19,6 +19,8 @@ import com.cMall.feedShop.event.domain.enums.EventStatus;
 import com.cMall.feedShop.event.application.service.EventStatusService;
 import com.cMall.feedShop.common.util.TimeUtil;
 import org.junit.jupiter.api.BeforeEach;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -79,12 +81,18 @@ class FeedVoteServiceTest {
     @Mock
     private FeedVotePersistenceService feedVotePersistenceService;
 
+    @Mock
+    private StringRedisTemplate redisTemplate;
+
+    @Mock
+    private ValueOperations<String, String> valueOperations;
+
     @InjectMocks
     private FeedVoteService feedVoteService;
 
     @BeforeEach
     void setUp() {
-        // 기본 Mock 설정은 각 테스트에서 필요한 것만 설정
+        lenient().when(redisTemplate.opsForValue()).thenReturn(valueOperations);
     }
 
     @Test
@@ -104,7 +112,10 @@ class FeedVoteServiceTest {
         when(feedVoteRepository.existsByEventIdAndUserId(eventId, userId)).thenReturn(false);
         // [Phase 2-B] feedVoteRepository.save() → feedVotePersistenceService.saveVote()로 변경
         when(feedVotePersistenceService.saveVote(any(FeedVote.class))).thenReturn(mock(FeedVote.class));
-        when(feed.getParticipantVoteCount()).thenReturn(1);
+
+        // Redis 키 없음 → DB 폴백 경로
+        when(valueOperations.get(anyString())).thenReturn(null);
+        when(feedVoteRepository.countByFeed_Id(feedId)).thenReturn(1L);
 
         // when
         FeedVoteResponseDto result = feedVoteService.voteFeed(feedId, userId);
@@ -212,7 +223,8 @@ class FeedVoteServiceTest {
     void getVoteCount_success() {
         // given
         Long feedId = 1L;
-        when(feedVoteRepository.countByFeed_Id(feedId)).thenReturn(5L); // Repository에서 실제 투표 수 반환
+        when(valueOperations.get(anyString())).thenReturn(null); // Redis 키 없음 → DB 폴백
+        when(feedVoteRepository.countByFeed_Id(feedId)).thenReturn(5L);
 
         // when
         long result = feedVoteService.getVoteCount(feedId);
@@ -227,6 +239,7 @@ class FeedVoteServiceTest {
     void getVoteCount_feedNotFound_returnsZero() {
         // given
         Long feedId = 999L;
+        when(valueOperations.get(anyString())).thenReturn(null); // Redis 키 없음 → DB 폴백
         when(feedVoteRepository.countByFeed_Id(feedId)).thenReturn(0L);
 
         // when
@@ -279,14 +292,16 @@ class FeedVoteServiceTest {
         // given
         Long feedId = 1L;
         when(feedRepository.findById(feedId)).thenReturn(Optional.of(feed));
-        when(feed.getParticipantVoteCount()).thenReturn(3); // 현재 Feed 엔티티 값
-        when(feedVoteRepository.countByFeed_Id(feedId)).thenReturn(5L); // 실제 투표 수
+        when(feed.getParticipantVoteCount()).thenReturn(3);
+        when(feedVoteRepository.countByFeed_Id(feedId)).thenReturn(5L);
+        when(valueOperations.get(anyString())).thenReturn("3"); // Redis 불일치 → 보정
 
         // when
         feedVoteService.syncVoteCount(feedId);
 
         // then
         verify(feed, times(2)).incrementVoteCount(); // 3 -> 5 (2번 증가)
+        verify(valueOperations).set(anyString(), eq("5")); // Redis도 5로 보정
     }
 
     @Test
@@ -295,14 +310,16 @@ class FeedVoteServiceTest {
         // given
         Long feedId = 1L;
         when(feedRepository.findById(feedId)).thenReturn(Optional.of(feed));
-        when(feed.getParticipantVoteCount()).thenReturn(5); // 현재 Feed 엔티티 값
-        when(feedVoteRepository.countByFeed_Id(feedId)).thenReturn(3L); // 실제 투표 수
+        when(feed.getParticipantVoteCount()).thenReturn(5);
+        when(feedVoteRepository.countByFeed_Id(feedId)).thenReturn(3L);
+        when(valueOperations.get(anyString())).thenReturn("5"); // Redis 불일치 → 보정
 
         // when
         feedVoteService.syncVoteCount(feedId);
 
         // then
         verify(feed, times(2)).decrementVoteCount(); // 5 -> 3 (2번 감소)
+        verify(valueOperations).set(anyString(), eq("3")); // Redis도 3으로 보정
     }
 
     @Test
@@ -311,8 +328,9 @@ class FeedVoteServiceTest {
         // given
         Long feedId = 1L;
         when(feedRepository.findById(feedId)).thenReturn(Optional.of(feed));
-        when(feed.getParticipantVoteCount()).thenReturn(3); // 현재 Feed 엔티티 값
-        when(feedVoteRepository.countByFeed_Id(feedId)).thenReturn(3L); // 실제 투표 수
+        when(feed.getParticipantVoteCount()).thenReturn(3);
+        when(feedVoteRepository.countByFeed_Id(feedId)).thenReturn(3L);
+        when(valueOperations.get(anyString())).thenReturn("3"); // Redis 일치 → 보정 불필요
 
         // when
         feedVoteService.syncVoteCount(feedId);
@@ -320,6 +338,7 @@ class FeedVoteServiceTest {
         // then
         verify(feed, never()).incrementVoteCount();
         verify(feed, never()).decrementVoteCount();
+        verify(valueOperations, never()).set(anyString(), anyString()); // Redis 변경 없음
     }
 
     @Test
@@ -346,6 +365,7 @@ class FeedVoteServiceTest {
         when(feed2.getParticipantVoteCount()).thenReturn(3); // 동일함
         when(feedVoteRepository.countByFeed_Id(1L)).thenReturn(5L); // 실제 투표 수
         when(feedVoteRepository.countByFeed_Id(2L)).thenReturn(3L); // 실제 투표 수
+        when(valueOperations.get(anyString())).thenReturn("3"); // Redis 불일치
 
         // when
         feedVoteService.syncAllVoteCounts();

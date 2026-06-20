@@ -136,20 +136,6 @@ class FeedVoteControllerTest {
                 .andExpect(jsonPath("$.message").value("사용자 정보를 찾을 수 없습니다."));
     }
 
-    @Test
-    @DisplayName("피드 투표 취소 성공")
-    void cancelVote_success() throws Exception {
-        // given
-        Long feedId = 1L;
-        when(userRepository.findByLoginId("testuser")).thenReturn(Optional.of(testUser));
-
-        // when & then
-        mockMvc.perform(delete("/api/feeds/{feedId}/vote", feedId)
-                        .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data").value("투표가 취소되었습니다."));
-    }
 
     @Test
     @DisplayName("투표 여부 확인 성공 - 투표함")

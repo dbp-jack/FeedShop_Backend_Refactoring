@@ -62,34 +62,6 @@ public class FeedVoteController {
     }
 
     /**
-     * 피드 투표 취소
-     */
-    @DeleteMapping("/{feedId}/vote")
-    @PreAuthorize("isAuthenticated()")
-    @Operation(summary = "피드 투표 취소", description = "피드 투표를 취소합니다.")
-    public ResponseEntity<ApiResponse<String>> cancelVote(
-            @Parameter(description = "피드 ID") @PathVariable Long feedId,
-            @AuthenticationPrincipal UserDetails userDetails) {
-        
-        if (userDetails == null) {
-            return ResponseEntity.badRequest()
-                    .body(ApiResponse.error("인증이 필요합니다."));
-        }
-
-        Long userId = extractUserIdFromUserDetails(userDetails);
-        if (userId == null) {
-            return ResponseEntity.badRequest()
-                    .body(ApiResponse.error("사용자 정보를 찾을 수 없습니다."));
-        }
-        
-        feedVoteService.cancelVote(feedId, userId);
-        
-        log.info("피드 투표 취소 완료 - feedId: {}, userId: {}", feedId, userId);
-        
-        return ResponseEntity.ok(ApiResponse.success("투표가 취소되었습니다."));
-    }
-
-    /**
      * 사용자가 특정 피드에 투표했는지 확인
      */
     @GetMapping("/{feedId}/vote/check")

@@ -13,8 +13,6 @@ import com.cMall.feedShop.user.domain.repository.UserRepository;
 import com.cMall.feedShop.user.application.service.UserLevelService;
 import com.cMall.feedShop.user.domain.model.ActivityType;
 import com.cMall.feedShop.user.application.service.PointService;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 import com.cMall.feedShop.event.domain.Event;
 import com.cMall.feedShop.event.domain.enums.EventStatus;
 import com.cMall.feedShop.event.application.service.EventStatusService;
@@ -126,8 +124,13 @@ public class FeedVoteService {
         // [BEFORE 2] 원자적 SQL UPDATE → feed_votes FK S-lock + feeds UPDATE X-lock 데드락 발생
         // feedRepository.incrementVoteCountAtomic(feedId);
 
-        // [Phase 2-B] Redis INCR 원자적 연산 — lock 없이 투표 수 정합성 보장
-        redisTemplate.opsForValue().increment(VOTE_COUNT_KEY + feedId);
+        // [Phase 2-B] Redis INCR 원자적 연산 — lock 없이 투표 수 갱신
+        // Redis 실패 시 DB 커밋은 이미 완료된 상태. 정기 보정 스케줄러가 불일치를 복구
+        try {
+            redisTemplate.opsForValue().increment(VOTE_COUNT_KEY + feedId);
+        } catch (Exception e) {
+            log.error("Failed to update Redis vote count after DB commit. feedId={}, operation=INCR", feedId, e);
+        }
 
         log.info("피드 투표 완료 - feedId: {}, userId: {}, voteId: {}", feedId, userId, savedVote.getId());
 
@@ -150,49 +153,6 @@ public class FeedVoteService {
         return FeedVoteResponseDto.success(true, (int) getVoteCount(feedId));
     }
 
-    /**
-     * 피드 투표 취소
-     */
-    @Transactional
-    public void cancelVote(Long feedId, Long userId) {
-        log.info("피드 투표 취소 요청 - feedId: {}, userId: {}", feedId, userId);
-
-        // 1. 사용자 조회
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND, "사용자를 찾을 수 없습니다."));
-
-        // 2. 피드 조회
-        Feed feed = feedRepository.findById(feedId)
-                .orElseThrow(() -> new FeedNotFoundException(feedId));
-
-        if (feed.isDeleted()) {
-            throw new FeedNotFoundException(feedId);
-        }
-
-        // 3. 투표 존재 확인
-        FeedVote vote = feedVoteRepository.findByFeed_IdAndVoter_Id(feedId, userId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "투표 내역을 찾을 수 없습니다."));
-
-        // 4. 투표 삭제
-        feedVoteRepository.delete(vote);
-
-        // 5. 피드 투표 수 감소
-        feed.decrementVoteCount();
-
-        // [Phase 2-B] Redis DECR — DB 커밋 이후 실행 (트랜잭션 내 실행 시 롤백돼도 Redis는 복구 불가)
-        // 키 없거나 음수 결과 시 키 삭제 → getVoteCount()가 DB 폴백으로 재조회
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override
-            public void afterCommit() {
-                Long result = redisTemplate.opsForValue().decrement(VOTE_COUNT_KEY + feedId);
-                if (result != null && result < 0) {
-                    redisTemplate.delete(VOTE_COUNT_KEY + feedId);
-                }
-            }
-        });
-
-        log.info("피드 투표 취소 완료 - feedId: {}, userId: {}", feedId, userId);
-    }
 
     /**
      * 사용자가 특정 피드에 투표했는지 확인
