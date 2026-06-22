@@ -65,7 +65,7 @@ bash "run-local 2.sh"
 
 - **Frontend Repository**: [FeedShop Frontend (React)](https://github.com/ECommerceCommunity/FeedShop_Frontend)
 - **Live Demo**: [www.feedshop.store](https://www.feedshop.store)
-- **API Documentation**: [Swagger UI](https://feedshop-springboot-561086069695.asia-northeast3.run.app/swagger-ui/index.html)
+- **API Documentation**: Cloud Run Swagger URL은 2026-06-22 기준 HTTP 503으로 외부 노출 중단
 
 ---
 
@@ -350,7 +350,7 @@ docker run -p 8080:8080 feedshop-backend
 
 - **Swagger UI**: [http://localhost:8080/swagger-ui/index.html](http://localhost:8080/swagger-ui/index.html)
 - **OpenAPI JSON**: [http://localhost:8080/v3/api-docs](http://localhost:8080/v3/api-docs)
-- **Production API**: [https://feedshop-springboot-561086069695.asia-northeast3.run.app/swagger-ui/index.html](https://feedshop-springboot-561086069695.asia-northeast3.run.app/swagger-ui/index.html)
+- **Production API**: 2026-06-22 기준 Cloud Run 응답 HTTP 503 — 외부 Swagger 노출 중단
 
 ### 주요 API 엔드포인트
 
