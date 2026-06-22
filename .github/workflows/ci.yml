@@ -63,12 +63,6 @@ jobs:
           }
         env:
           SPRING_PROFILES_ACTIVE: test
-          APP_VERIFICATION_URL: ${{ secrets.APP_VERIFICATION_URL }}
-          JWT_SECRET: ${{ secrets.TEST_JWT_SECRET }}
-          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
-          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
-          KAKAO_CLIENT_ID: ${{ secrets.KAKAO_CLIENT_ID }}
-          KAKAO_CLIENT_SECRET: ${{ secrets.KAKAO_CLIENT_SECRET }}
           MAILGUN_API_KEY: test-mailgun-api-key
           MAILGUN_DOMAIN: test.mailgun.org
           MAILGUN_EMAIL: test@mailgun.org
