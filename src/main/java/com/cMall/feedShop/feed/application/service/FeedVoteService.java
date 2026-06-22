@@ -44,12 +44,13 @@ public class FeedVoteService {
     private final UserLevelService userLevelService;
     private final PointService pointService;
     private final EventStatusService eventStatusService;
-    // [Phase 2-B] REQUIRES_NEW 분리 서비스 — flush() Hibernate Session 오염 방지
+    // DB 제약 위반이 발생한 저장 트랜잭션을 후속 리워드 처리와 격리
     private final FeedVotePersistenceService feedVotePersistenceService;
-    // [Phase 2-B] Redis INCR — 투표 수 원자적 연산 (데드락 없이 정합성 보장)
+    // Redis INCR — DB 카운터 락 경합 없이 파생 투표 수 갱신
     private final StringRedisTemplate redisTemplate;
 
     private static final String VOTE_COUNT_KEY = "vote:count:";
+    private static final String DUPLICATE_VOTE_CONSTRAINT = "uk_feed_votes_event_voter";
 
     /**
      * 피드 투표
@@ -58,7 +59,7 @@ public class FeedVoteService {
      */
     // [Phase 2-B] NOT_SUPPORTED: 트랜잭션 없이 실행
     // [BEFORE 1] @Transactional(noRollbackFor=...) → Hibernate Session 오염으로 무효
-    // [BEFORE 2] @Transactional + REQUIRES_NEW(saveVote) → 내부 rollback이 외부 오염
+    // [BEFORE 2] 외부 트랜잭션을 유지한 저장 분리 → rollback 뒤 후속 흐름의 안전성 보장 실패
     // [AFTER] NOT_SUPPORTED: 트랜잭션 없음 → saveVote 예외 catch해도 오염 없음
     //         각 하위 작업(saveVote, earnPoints, recordActivity)이 독립 트랜잭션 사용
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
@@ -93,14 +94,14 @@ public class FeedVoteService {
         // 4. 같은 이벤트에서 이미 다른 피드에 투표했는지 확인 (앱 레벨 1차 체크)
         if (feedVoteRepository.existsByEventIdAndUserId(feed.getEvent().getId(), userId)) {
             log.info("이미 해당 이벤트에 투표함 - 이벤트ID: {}, 사용자ID: {}", feed.getEvent().getId(), userId);
-            return FeedVoteResponseDto.success(false, feed.getParticipantVoteCount());
+            return FeedVoteResponseDto.success(false, safeVoteCount(feedId));
         }
 
         // 5. 투표 생성
         // [Phase 2-B] DB 유니크 제약 (event_id, voter_id)으로 동시 요청 시 중복 방지
-        // FeedVotePersistenceService(REQUIRES_NEW)에서 flush() 처리
-        //   → DataIntegrityViolationException 발생 시 해당 트랜잭션만 rollback
-        //   → 외부 트랜잭션(이 메서드) Hibernate Session 오염 없음
+        // FeedVotePersistenceService의 REQUIRED 트랜잭션에서 flush() 처리
+        //   → 유니크 제약 위반은 저장 트랜잭션만 rollback
+        //   → 이 오케스트레이션은 NOT_SUPPORTED이므로 오염된 영속성 컨텍스트를 이어 쓰지 않음
         FeedVote vote = FeedVote.builder()
                 .feed(feed)
                 .voter(user)
@@ -113,9 +114,12 @@ public class FeedVoteService {
         try {
             savedVote = feedVotePersistenceService.saveVote(vote);
         } catch (DataIntegrityViolationException e) {
+            if (!isDuplicateVoteViolation(e)) {
+                throw e;
+            }
             log.info("[Phase 2-B] DB 유니크 제약으로 동시 투표 중복 차단 - 이벤트ID: {}, 사용자ID: {}",
                     feed.getEvent().getId(), userId);
-            return FeedVoteResponseDto.success(false, feed.getParticipantVoteCount());
+            return FeedVoteResponseDto.success(false, safeVoteCount(feedId));
         }
 
         // 6. 피드 투표 수 증가
@@ -126,11 +130,7 @@ public class FeedVoteService {
 
         // [Phase 2-B] Redis INCR 원자적 연산 — lock 없이 투표 수 갱신
         // Redis 실패 시 DB 커밋은 이미 완료된 상태. 정기 보정 스케줄러가 불일치를 복구
-        try {
-            redisTemplate.opsForValue().increment(VOTE_COUNT_KEY + feedId);
-        } catch (Exception e) {
-            log.error("Failed to update Redis vote count after DB commit. feedId={}, operation=INCR", feedId, e);
-        }
+        updateRedisVoteCount(feedId);
 
         log.info("피드 투표 완료 - feedId: {}, userId: {}, voteId: {}", feedId, userId, savedVote.getId());
 
@@ -150,7 +150,7 @@ public class FeedVoteService {
         }
 
         // Redis에서 최신 투표 수 반환
-        return FeedVoteResponseDto.success(true, (int) getVoteCount(feedId));
+        return FeedVoteResponseDto.success(true, safeVoteCount(feedId));
     }
 
 
@@ -171,15 +171,49 @@ public class FeedVoteService {
      */
     public long getVoteCount(Long feedId) {
         String redisKey = VOTE_COUNT_KEY + feedId;
-        String cached = redisTemplate.opsForValue().get(redisKey);
-        if (cached != null) {
-            return Long.parseLong(cached);
+        try {
+            String cached = redisTemplate.opsForValue().get(redisKey);
+            if (cached != null) {
+                return Long.parseLong(cached);
+            }
+            long dbCount = feedVoteRepository.countByFeed_Id(feedId);
+            redisTemplate.opsForValue().setIfAbsent(redisKey, String.valueOf(dbCount));
+            return dbCount;
+        } catch (Exception e) {
+            log.warn("Redis vote count read failed; falling back to DB. feedId={}", feedId, e);
+            return feedVoteRepository.countByFeed_Id(feedId);
         }
-        // Redis 키 없음 (장애 후 키 삭제, 음수 방지 삭제 등) → DB 원본 집계 후 Redis 복구
-        // setIfAbsent: 동시 여러 스레드가 동시에 DB 조회 후 SET 시도해도 첫 번째만 성공
-        long dbCount = feedVoteRepository.countByFeed_Id(feedId);
-        redisTemplate.opsForValue().setIfAbsent(redisKey, String.valueOf(dbCount));
-        return dbCount;
+    }
+
+    private void updateRedisVoteCount(Long feedId) {
+        String redisKey = VOTE_COUNT_KEY + feedId;
+        try {
+            Long incremented = redisTemplate.opsForValue().increment(redisKey);
+            if (incremented != null && incremented == 1L) {
+                long dbCount = feedVoteRepository.countByFeed_Id(feedId);
+                if (dbCount > incremented) {
+                    redisTemplate.opsForValue().set(redisKey, String.valueOf(dbCount));
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Redis vote count update failed; DB remains the source of truth. feedId={}", feedId, e);
+        }
+    }
+
+    private int safeVoteCount(Long feedId) {
+        return Math.toIntExact(getVoteCount(feedId));
+    }
+
+    private boolean isDuplicateVoteViolation(DataIntegrityViolationException exception) {
+        Throwable current = exception;
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null && message.toLowerCase().contains(DUPLICATE_VOTE_CONSTRAINT)) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     /**

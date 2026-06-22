@@ -21,6 +21,7 @@ import com.cMall.feedShop.common.util.TimeUtil;
 import org.junit.jupiter.api.BeforeEach;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -142,7 +143,7 @@ class FeedVoteServiceTest {
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
         when(eventStatusService.calculateEventStatus(any(Event.class), any())).thenReturn(EventStatus.ONGOING);
         when(feedVoteRepository.existsByEventIdAndUserId(eventId, userId)).thenReturn(true);
-        when(feed.getParticipantVoteCount()).thenReturn(1); // 이미 투표된 상태
+        when(valueOperations.get("vote:count:" + feedId)).thenReturn("1");
 
 
         // when
@@ -155,6 +156,85 @@ class FeedVoteServiceTest {
 
         verify(feedVoteRepository, never()).save(any());
         verify(feed, never()).incrementVoteCount();
+    }
+
+    @Test
+    @DisplayName("동시 중복 투표 - 지정된 DB 유니크 제약 위반만 중복 응답으로 변환")
+    void voteFeed_duplicateConstraintViolation_returnsDuplicateResponse() {
+        Long feedId = 1L;
+        Long userId = 1L;
+        Long eventId = 1L;
+        Event event = mock(Event.class);
+
+        when(feed.isEventFeed()).thenReturn(true);
+        when(feedRepository.findById(feedId)).thenReturn(Optional.of(feed));
+        when(feed.getEvent()).thenReturn(event);
+        when(event.getId()).thenReturn(eventId);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(eventStatusService.calculateEventStatus(any(Event.class), any())).thenReturn(EventStatus.ONGOING);
+        when(feedVoteRepository.existsByEventIdAndUserId(eventId, userId)).thenReturn(false);
+        when(feedVotePersistenceService.saveVote(any(FeedVote.class)))
+                .thenThrow(new DataIntegrityViolationException(
+                        "duplicate vote",
+                        new RuntimeException("Duplicate entry for key 'uk_feed_votes_event_voter'")));
+        when(valueOperations.get("vote:count:" + feedId)).thenReturn("7");
+
+        FeedVoteResponseDto result = feedVoteService.voteFeed(feedId, userId);
+
+        assertThat(result.isVoted()).isFalse();
+        assertThat(result.getVoteCount()).isEqualTo(7);
+        verify(pointService, never()).earnPoints(any(), anyInt(), anyString(), anyLong());
+    }
+
+    @Test
+    @DisplayName("다른 무결성 오류는 중복 투표로 숨기지 않음")
+    void voteFeed_otherIntegrityViolation_isRethrown() {
+        Long feedId = 1L;
+        Long userId = 1L;
+        Long eventId = 1L;
+        Event event = mock(Event.class);
+
+        when(feed.isEventFeed()).thenReturn(true);
+        when(feedRepository.findById(feedId)).thenReturn(Optional.of(feed));
+        when(feed.getEvent()).thenReturn(event);
+        when(event.getId()).thenReturn(eventId);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(eventStatusService.calculateEventStatus(any(Event.class), any())).thenReturn(EventStatus.ONGOING);
+        when(feedVoteRepository.existsByEventIdAndUserId(eventId, userId)).thenReturn(false);
+        DataIntegrityViolationException foreignKeyError = new DataIntegrityViolationException(
+                "foreign key violation",
+                new RuntimeException("Cannot add or update a child row"));
+        when(feedVotePersistenceService.saveVote(any(FeedVote.class))).thenThrow(foreignKeyError);
+
+        assertThatThrownBy(() -> feedVoteService.voteFeed(feedId, userId))
+                .isSameAs(foreignKeyError);
+    }
+
+    @Test
+    @DisplayName("Redis 키가 유실되어 INCR가 1부터 시작하면 DB 원본 투표 수로 복구")
+    void voteFeed_missingRedisKey_repairsFromDatabase() {
+        Long feedId = 1L;
+        Long userId = 1L;
+        Long eventId = 1L;
+        Event event = mock(Event.class);
+
+        when(feed.isEventFeed()).thenReturn(true);
+        when(feedRepository.findById(feedId)).thenReturn(Optional.of(feed));
+        when(feed.getEvent()).thenReturn(event);
+        when(event.getId()).thenReturn(eventId);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(eventStatusService.calculateEventStatus(any(Event.class), any())).thenReturn(EventStatus.ONGOING);
+        when(feedVoteRepository.existsByEventIdAndUserId(eventId, userId)).thenReturn(false);
+        when(feedVotePersistenceService.saveVote(any(FeedVote.class))).thenReturn(feedVote);
+        when(valueOperations.increment("vote:count:" + feedId)).thenReturn(1L);
+        when(feedVoteRepository.countByFeed_Id(feedId)).thenReturn(12L);
+        when(valueOperations.get("vote:count:" + feedId)).thenReturn("12");
+
+        FeedVoteResponseDto result = feedVoteService.voteFeed(feedId, userId);
+
+        assertThat(result.isVoted()).isTrue();
+        assertThat(result.getVoteCount()).isEqualTo(12);
+        verify(valueOperations).set("vote:count:" + feedId, "12");
     }
 
     // voteFeed_feedNotFound 테스트는 제거 - 서비스 로직상 사용자를 먼저 조회하므로
@@ -247,6 +327,19 @@ class FeedVoteServiceTest {
 
         // then
         assertThat(result).isEqualTo(0L);
+        verify(feedVoteRepository).countByFeed_Id(feedId);
+    }
+
+    @Test
+    @DisplayName("Redis 조회 장애 시 DB 원본 투표 수로 응답")
+    void getVoteCount_redisFailure_fallsBackToDatabase() {
+        Long feedId = 1L;
+        when(valueOperations.get("vote:count:" + feedId)).thenThrow(new RuntimeException("Redis unavailable"));
+        when(feedVoteRepository.countByFeed_Id(feedId)).thenReturn(9L);
+
+        long result = feedVoteService.getVoteCount(feedId);
+
+        assertThat(result).isEqualTo(9L);
         verify(feedVoteRepository).countByFeed_Id(feedId);
     }
 
