@@ -185,6 +185,7 @@ class PointServiceTest {
     @DisplayName("포인트 적립 성공")
     void earnPoints_Success() {
         // given
+        when(userRepository.findById(testUser.getId())).thenReturn(Optional.of(testUser));
         when(userPointRepository.findByUser(testUser)).thenReturn(Optional.of(testUserPoint));
         when(userPointRepository.save(any(UserPoint.class))).thenReturn(testUserPoint);
         when(pointTransactionRepository.save(any(PointTransaction.class))).thenReturn(testTransaction);
