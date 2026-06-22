@@ -5,10 +5,15 @@ on:
     branches: ["main", "develop"]
   pull_request:
     branches: ["main", "develop"]
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
+      SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
     permissions:
       contents: read
       pull-requests: write
@@ -106,29 +111,8 @@ jobs:
           name: test-coverage
           path: build/reports/jacoco/test/jacocoTestReport.xml
 
-      # SONAR_TOKEN 디버그 스텝은 꼭 필요한 경우에만 사용
-      - name: Debug SONAR_TOKEN
-        run: |
-          if [ -z "$SONAR_TOKEN" ]; then
-            echo "SONAR_TOKEN is not set"
-          else
-            echo "SONAR_TOKEN is set (length: ${#SONAR_TOKEN})"
-          fi
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-
-      # SonarCloud Organization secret이 올바르게 설정되었는지 확인하는 디버그 스텝 추가
-      - name: Debug SonarCloud Organization
-        run: |
-          if [ -z "${{ secrets.SONAR_ORGANIZATION }}" ]; then
-            echo "SONAR_ORGANIZATION secret is NOT set or is empty!"
-          else
-            echo "SONAR_ORGANIZATION secret is set (length: ${{ secrets.SONAR_ORGANIZATION && secrets.SONAR_ORGANIZATION.length || 0 }})"
-          fi
-        env:
-          SONAR_ORGANIZATION_LENGTH: ${{ secrets.SONAR_ORGANIZATION && secrets.SONAR_ORGANIZATION.length || 0 }}
-
       - name: Analyze with SonarCloud
+        if: ${{ env.SONAR_TOKEN != '' }}
         run: |
           SONAR_PARAMS=""
           # Pull Request 이벤트인 경우 PR 관련 파라미터 설정
@@ -148,8 +132,8 @@ jobs:
           fi
 
           ./gradlew sonar \
-            -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }} \
-            -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }} \
+            -Dsonar.projectKey=$SONAR_PROJECT_KEY \
+            -Dsonar.organization=$SONAR_ORGANIZATION \
             -Dsonar.host.url=https://sonarcloud.io \
             -Dsonar.scm.provider=git \
             -Dsonar.java.binaries=build/classes/java/main \
@@ -158,5 +142,8 @@ jobs:
             -Dsonar.qualitygate.wait=false \
             $SONAR_PARAMS
         env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Skip SonarCloud when credentials are unavailable
+        if: ${{ env.SONAR_TOKEN == '' }}
+        run: echo "SonarCloud analysis skipped because SONAR_TOKEN is not configured."
