@@ -1,62 +1,5 @@
 # 👟 FeedShop | 신발 전문 이커머스 백엔드
 
----
-
-<details>
-<summary>🔧 로컬 개발 환경 리팩토링 변경 이력 (2026-06-01)</summary>
-
-> 로컬 실행 환경을 외부 의존성 없이 독립적으로 동작하도록 정비한 작업입니다.
-
-### 변경 내용
-
-#### 1. Spring AI 비활성화
-- `build.gradle` — `spring-ai-bom`, `spring-ai-openai-spring-boot-starter` 의존성 주석 처리
-- `application.properties` — `spring.autoconfigure.exclude`로 `OpenAiAutoConfiguration` 제외
-- `BaseAIService` — Spring AI(`ChatModel`) import 제거, 항상 폴백을 반환하는 Mock 구현으로 교체
-- AI 기능은 운영 환경(`prod` 프로파일)에서 의존성 복원 후 정상 동작
-
-#### 2. 데이터베이스 로컬 전환
-- `.env.dev` — 외부 GCP DB(`34.64.121.24`) → 로컬 MySQL(`localhost`)로 변경
-- 로컬 DB: `host=localhost`, `port=3306`, `db=shopgram`, `user=root`
-- 로컬에서 `shopgram` DB 미존재 시 아래 명령어로 생성
-  ```sql
-  CREATE DATABASE shopgram CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-  ```
-
-#### 3. 인증/인가 간소화 (`dev` 프로파일 전용)
-- OAuth2(Google/Kakao/Naver) 설정 제거 — `application.properties`에서 주석 처리
-- `DevSecurityConfig` — OAuth2 의존성 제거, `DevAuthFilter` 연결
-- `DevAuthFilter` 신규 추가 — `X-User-Id` 헤더 값을 `SecurityContext`에 주입
-  - 헤더가 없으면 기본값 `dev-user`로 인증
-  - 컨트롤러의 `@AuthenticationPrincipal` 코드 변경 없이 동작
-
-  ```bash
-  # 사용 예시
-  curl -H "X-User-Id: user" http://localhost:8081/api/feeds
-  curl -H "X-User-Id: admin" http://localhost:8081/api/events/all
-  ```
-
-#### 4. 누락 설정 추가
-- `app.cdn.base-url` (기본값: `http://localhost:8081`)
-- `app.oauth2.authorized-redirect-uri` (기본값: `http://localhost:3000/oauth2/redirect`)
-- `spring.profiles.active=dev` 활성화
-
-#### 5. 코드 정리
-- `feed/domain/FeedType.java` 삭제 — `feed/domain/enums/FeedType.java`와 중복된 미사용 파일
-
-### 로컬 실행 방법
-
-```bash
-# MySQL 기동 확인 후
-bash "run-local 2.sh"
-
-# 기동 시 dev-user / user / admin / seller 테스트 계정이 자동 생성됩니다
-```
-
-</details>
-
----
-
 [![CI](https://github.com/ECommerceCommunity/FeedShop_Backend/actions/workflows/ci.yml/badge.svg)](https://github.com/ECommerceCommunity/FeedShop_Backend/actions/workflows/ci.yml)
 [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=ECommerceCommunity_FeedShop_Backend&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=ECommerceCommunity_FeedShop_Backend)
 [![Vulnerabilities](https://sonarcloud.io/api/project_badges/measure?project=ECommerceCommunity_FeedShop_Backend&metric=vulnerabilities)](https://sonarcloud.io/summary/new_code?id=ECommerceCommunity_FeedShop_Backend)
@@ -65,7 +8,40 @@ bash "run-local 2.sh"
 
 - **Frontend Repository**: [FeedShop Frontend (React)](https://github.com/ECommerceCommunity/FeedShop_Frontend)
 - **Live Demo**: [www.feedshop.store](https://www.feedshop.store)
-- **API Documentation**: Cloud Run Swagger URL은 2026-06-22 기준 HTTP 503으로 외부 노출 중단
+
+---
+
+## 👤 담당 도메인 — 피드 & 이벤트 (정민수)
+
+### 담당 도메인
+
+| 도메인 | 역할 | 바로가기 |
+|---|---|---|
+| **Feed** | 피드 작성·조회·수정·삭제, 좋아요, 댓글, **투표 동시성 처리(TOCTOU·Redis INCR)**, 검색, 리워드 이벤트 연동 | [주요 기능 →](#-커뮤니티-기능) · [구현 현황 →](#-도메인별-구현-현황) |
+| **Event** | 이벤트 CRUD, 참여자 관리, 결과 처리, **N+1 제거(QueryDSL fetchJoin) · Redis 캐싱 성능 개선** | [주요 기능 →](#-커뮤니티-기능) · [구현 현황 →](#-도메인별-구현-현황) |
+
+### 주요 기여 요약
+
+| 영역 | 작업 내용 | 확인 지표 |
+|---|---|---|
+| 이벤트 목록 조회 | QueryDSL `fetchJoin`으로 N+1 제거 후 Redis 캐시 적용 | SQL 42회 → 2회 → 0회(Cache Hit), 동시 1,000명 응답시간 6,818ms → 638ms |
+| 피드 투표 동시성 | `(event_id, voter_id)` 유니크 제약, 트랜잭션 경계 분리, Redis `INCR` 적용 | 동시 3,000명 부하에서 HTTP 오류 0건, 중복 저장 0건, DB 레코드 수 = Redis 카운터 확인 |
+| 검증 | nGrinder·Scouter·통합 테스트로 개선 전후 동일 조건 재측정 | 측정 이미지와 커밋 근거를 Wiki에 정리 |
+
+### 관련 섹션 바로가기
+
+- [💬 커뮤니티 기능](#-커뮤니티-기능) — 피드 시스템 · 이벤트 관리 기능 설명
+- [🏗️ 아키텍처 — 도메인별 모듈화](#도메인별-모듈화) — Feed · Event 모듈 구조
+- [📊 도메인별 구현 현황](#-도메인별-구현-현황) — Feed · Event 구현 상태 및 테스트 커버리지
+- [📖 주요 API 엔드포인트](#-주요-api-엔드포인트) — `/api/feeds/*` · `/api/events/*`
+
+### Wiki
+
+- [Event 도메인](https://github.com/dbp-jack/FeedShop_Backend_Refactoring/wiki/Event-%EB%8F%84%EB%A9%94%EC%9D%B8) — PR별 구현 내용 · 코드 리뷰 · 트러블슈팅
+- [Feed 도메인](https://github.com/dbp-jack/FeedShop_Backend_Refactoring/wiki/Feed-%EB%8F%84%EB%A9%94%EC%9D%B8) — PR별 구현 내용 · 코드 리뷰 · 트러블슈팅
+- [이벤트 목록 조회 성능 개선](https://github.com/dbp-jack/FeedShop_Backend_Refactoring/wiki/%EC%9D%B4%EB%B2%A4%ED%8A%B8-%EB%AA%A9%EB%A1%9D-%EC%A1%B0%ED%9A%8C-%EC%84%B1%EB%8A%A5-%EA%B0%9C%EC%84%A0) — QueryDSL N+1 제거 · Redis 캐싱
+- [피드 투표 동시성 개선](https://github.com/dbp-jack/FeedShop_Backend_Refactoring/wiki/%ED%94%BC%EB%93%9C-%ED%88%AC%ED%91%9C-%EB%8F%99%EC%8B%9C%EC%84%B1-%EA%B0%9C%EC%84%A0) — TOCTOU · 트랜잭션 경계 · Redis 카운터 정합성
+- [트러블슈팅](https://github.com/dbp-jack/FeedShop_Backend_Refactoring/wiki/%ED%8A%B8%EB%9F%AC%EB%B8%94%EC%8A%88%ED%8C%85) — 전체 이슈 모음
 
 ---
 
@@ -82,31 +58,6 @@ bash "run-local 2.sh"
 - [📈 CI/CD](#-cicd)
 - [🤝 기여 방법](#-기여-방법)
 - [📝 라이선스](#-라이선스)
-
----
-
-## 👤 담당 도메인 — 피드 & 이벤트 (정민수)
-
-### 담당 도메인
-
-| 도메인 | 역할 | 바로가기 |
-|---|---|---|
-| **Feed** | 피드 작성·조회·수정·삭제, 좋아요, 댓글, **투표 동시성 처리(TOCTOU·Redis INCR)**, 검색, 리워드 이벤트 연동 | [주요 기능 →](#-커뮤니티-기능) · [구현 현황 →](#-도메인별-구현-현황) |
-| **Event** | 이벤트 CRUD, 참여자 관리, 결과 처리, **N+1 제거(QueryDSL fetchJoin) · Redis 캐싱 성능 개선** | [주요 기능 →](#-커뮤니티-기능) · [구현 현황 →](#-도메인별-구현-현황) |
-
-### 관련 섹션 바로가기
-
-- [💬 커뮤니티 기능](#-커뮤니티-기능) — 피드 시스템 · 이벤트 관리 기능 설명
-- [🏗️ 아키텍처 — 도메인별 모듈화](#도메인별-모듈화) — Feed · Event 모듈 구조
-- [📊 도메인별 구현 현황](#-도메인별-구현-현황) — Feed · Event 구현 상태 및 테스트 커버리지
-- [📖 주요 API 엔드포인트](#-주요-api-엔드포인트) — `/api/feeds/*` · `/api/events/*`
-
-### Wiki
-
-- [🎯 Event 도메인](https://github.com/dbp-jack/FeedShop_Backend_Refactoring/wiki/Event-%EB%8F%84%EB%A9%94%EC%9D%B8) — PR별 구현 내용 · 코드 리뷰 · 트러블슈팅
-- [📰 Feed 도메인](https://github.com/dbp-jack/FeedShop_Backend_Refactoring/wiki/Feed-%EB%8F%84%EB%A9%94%EC%9D%B8) — PR별 구현 내용 · 코드 리뷰 · 트러블슈팅
-- [🚀 성능 개선 작업](https://github.com/dbp-jack/FeedShop_Backend_Refactoring/wiki/%EC%84%B1%EB%8A%A5-%EA%B0%9C%EC%84%A0-%EC%9E%91%EC%97%85) — QueryDSL N+1 제거 · Redis 캐싱 · 투표 동시성(TOCTOU·Redis INCR)
-- [🔥 트러블슈팅](https://github.com/dbp-jack/FeedShop_Backend_Refactoring/wiki/%ED%8A%B8%EB%9F%AC%EB%B8%94%EC%8A%88%ED%8C%85) — 전체 이슈 모음
 
 ---
 
@@ -209,15 +160,15 @@ src/main/java/com/cMall/feedShop/
 
 | 도메인      | 구현 상태 | 주요 기능                                                 | 테스트 커버리지 |
 | ----------- | --------- | --------------------------------------------------------- | --------------- |
-| **User**    | ✅ 완료   | JWT 인증, OAuth2 소셜 로그인, 포인트/쿠폰, 뱃지/레벨, 2FA | 높음            |
-| **Product** | ✅ 완료   | 상품 CRUD, 옵션 관리, 이미지 업로드                       | 높음            |
-| **Cart**    | ✅ 완료   | 장바구니 관리, 선택 상품 처리                             | 높음            |
-| **Order**   | ✅ 완료   | 주문 생성, 재고 관리, 포인트 사용                         | 높음            |
-| **Review**  | ✅ 완료   | 리뷰 CRUD, 평점 시스템, 통계                              | 높음            |
-| **Feed**    | ✅ 완료   | 피드 작성, 조회, 수정, 삭제, 좋아요, 댓글, 투표, 해시태그, 검색 | 높음            |
-| **Event**   | ✅ 완료   | 이벤트 관리, 검색, 필터링, 배틀/랭킹 타입, 참여자 관리, 결과 처리 | 높음            |
-| **Store**   | ✅ 완료   | 스토어 정보 관리                                          | 높음            |
-| **AI**      | ✅ 완료 | OpenAI 기반 상품 추천                                     | 높음            |
+| **User**    | 완료   | JWT 인증, OAuth2 소셜 로그인, 포인트/쿠폰, 뱃지/레벨, 2FA | 높음            |
+| **Product** | 완료   | 상품 CRUD, 옵션 관리, 이미지 업로드                       | 높음            |
+| **Cart**    | 완료   | 장바구니 관리, 선택 상품 처리                             | 높음            |
+| **Order**   | 완료   | 주문 생성, 재고 관리, 포인트 사용                         | 높음            |
+| **Review**  | 완료   | 리뷰 CRUD, 평점 시스템, 통계                              | 높음            |
+| **Feed**    | 완료   | 피드 작성, 조회, 수정, 삭제, 좋아요, 댓글, 투표, 해시태그, 검색 | 높음            |
+| **Event**   | 완료   | 이벤트 관리, 검색, 필터링, 배틀/랭킹 타입, 참여자 관리, 결과 처리 | 높음            |
+| **Store**   | 완료   | 스토어 정보 관리                                          | 높음            |
+| **AI**      | 완료 | OpenAI 기반 상품 추천                                     | 높음            |
 
 ---
 
@@ -350,7 +301,7 @@ docker run -p 8080:8080 feedshop-backend
 
 - **Swagger UI**: [http://localhost:8080/swagger-ui/index.html](http://localhost:8080/swagger-ui/index.html)
 - **OpenAPI JSON**: [http://localhost:8080/v3/api-docs](http://localhost:8080/v3/api-docs)
-- **Production API**: 2026-06-22 기준 Cloud Run 응답 HTTP 503 — 외부 Swagger 노출 중단
+- **Production API**: 운영 Swagger는 현재 외부 공개 대상에서 제외
 
 ### 주요 API 엔드포인트
 
@@ -401,6 +352,59 @@ docker run -p 8080:8080 feedshop-backend
 ---
 
 ## 🔧 개발 환경
+
+<details>
+<summary>로컬 개발 환경 리팩토링 변경 이력 (2026-06-01)</summary>
+
+> 로컬 실행 환경을 외부 의존성 없이 독립적으로 동작하도록 정비한 작업입니다.
+
+### 변경 내용
+
+#### 1. Spring AI 비활성화
+- `build.gradle` — `spring-ai-bom`, `spring-ai-openai-spring-boot-starter` 의존성 주석 처리
+- `application.properties` — `spring.autoconfigure.exclude`로 `OpenAiAutoConfiguration` 제외
+- `BaseAIService` — Spring AI(`ChatModel`) import 제거, 항상 폴백을 반환하는 Mock 구현으로 교체
+- AI 기능은 운영 환경(`prod` 프로파일)에서 의존성 복원 후 정상 동작
+
+#### 2. 데이터베이스 로컬 전환
+- `.env.dev` — 외부 GCP DB(`34.64.121.24`) → 로컬 MySQL(`localhost`)로 변경
+- 로컬 DB: `host=localhost`, `port=3306`, `db=shopgram`, `user=root`
+- 로컬에서 `shopgram` DB 미존재 시 아래 명령어로 생성
+  ```sql
+  CREATE DATABASE shopgram CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+  ```
+
+#### 3. 인증/인가 간소화 (`dev` 프로파일 전용)
+- OAuth2(Google/Kakao/Naver) 설정 제거 — `application.properties`에서 주석 처리
+- `DevSecurityConfig` — OAuth2 의존성 제거, `DevAuthFilter` 연결
+- `DevAuthFilter` 신규 추가 — `X-User-Id` 헤더 값을 `SecurityContext`에 주입
+  - 헤더가 없으면 기본값 `dev-user`로 인증
+  - 컨트롤러의 `@AuthenticationPrincipal` 코드 변경 없이 동작
+
+  ```bash
+  # 사용 예시
+  curl -H "X-User-Id: user" http://localhost:8081/api/feeds
+  curl -H "X-User-Id: admin" http://localhost:8081/api/events/all
+  ```
+
+#### 4. 누락 설정 추가
+- `app.cdn.base-url` (기본값: `http://localhost:8081`)
+- `app.oauth2.authorized-redirect-uri` (기본값: `http://localhost:3000/oauth2/redirect`)
+- `spring.profiles.active=dev` 활성화
+
+#### 5. 코드 정리
+- `feed/domain/FeedType.java` 삭제 — `feed/domain/enums/FeedType.java`와 중복된 미사용 파일
+
+### 로컬 실행 방법
+
+```bash
+# MySQL 기동 확인 후
+bash "run-local 2.sh"
+
+# 기동 시 dev-user / user / admin / seller 테스트 계정이 자동 생성됩니다
+```
+
+</details>
 
 ### IDE 설정
 
